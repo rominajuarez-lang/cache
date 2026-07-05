@@ -30,6 +30,50 @@ from visualizacion import (
 
 warnings.filterwarnings("ignore")
 
+@st.cache_data(show_spinner="Calculando forecast automático...")
+def calcular_forecast_auto_cache(df_real, fecha_fin_pronostico):
+    return generar_forecast_mejor_por_producto(
+        df_real,
+        fecha_fin_pronostico=fecha_fin_pronostico,
+    )
+
+
+@st.cache_data(show_spinner="Calculando forecast manual...")
+def calcular_forecast_manual_cache(df_real, metodo_manual, fecha_fin_pronostico):
+    return generar_forecast(
+        df_real,
+        metodo_manual,
+        fecha_fin_pronostico=fecha_fin_pronostico,
+    )
+
+
+@st.cache_data(show_spinner="Calculando ahorro forecast...")
+def calcular_ahorro_cache(df_forecast_auto, df_forecast_empresa, df_parametros):
+    return calcular_ahorro_forecast_2025(
+        df_forecast_auto,
+        df_forecast_empresa,
+        df_parametros,
+    )
+
+
+@st.cache_data(show_spinner="Optimizando inventario...")
+def optimizar_cache(sub_forecast, politica, parametros_del_producto, ss_max):
+    return optimizar_stock_seguridad(
+        sub_forecast,
+        politica,
+        parametros_del_producto,
+        ss_max=ss_max,
+    )
+
+
+@st.cache_data(show_spinner="Evaluando políticas...")
+def campeon_cache(sub_forecast, parametros_del_producto, ss_max):
+    return evaluar_campeon_politicas(
+        sub_forecast,
+        parametros_del_producto,
+        ss_max,
+    )
+
 
 # =========================================================
 # FUNCIONES AUXILIARES - FORECAST COMERCIAL Y DASHBOARD
@@ -1023,11 +1067,16 @@ fecha_fin_pronostico = st.sidebar.date_input(
 fecha_fin_pronostico = pd.to_datetime(fecha_fin_pronostico).to_period("M").to_timestamp()
 
 # 🔴 ESTA ES LA LÍNEA QUE SE HABÍA BORRADO Y QUE CALCULA TODO:
-df_forecast_auto, df_comparacion = generar_forecast_mejor_por_producto(
+@st.cache_data(show_spinner="Calculando pronósticos...")
+def calcular_forecast_cache(df_real, fecha_fin_pronostico):
+    return generar_forecast_mejor_por_producto(
+        df_real,
+        fecha_fin_pronostico=fecha_fin_pronostico,
+    )
+df_forecast_auto, df_comparacion = calcular_forecast_cache(
     df_real,
-    fecha_fin_pronostico=fecha_fin_pronostico,
+    fecha_fin_pronostico,
 )
-
 # =========================================================
 # RESUMEN FORECAST PARA VISTA GENERAL
 # =========================================================
@@ -1037,10 +1086,10 @@ df_forecast_auto, df_comparacion = generar_forecast_mejor_por_producto(
 # =========================================================
 total_skus_forecast = df_real["product_id"].nunique()
 
-df_ahorro_forecast, kpis_forecast = calcular_ahorro_forecast_2025(
-    df_forecast_auto=df_forecast_auto,
-    df_forecast_empresa=df_forecast_empresa,
-    df_parametros=df_parametros,
+df_ahorro_forecast, kpis_ahorro = calcular_ahorro_cache(
+    df_forecast_auto,
+    df_forecast_empresa,
+    df_parametros,
 )
 
 ahorro_total = kpis_forecast["ahorro_total"]
@@ -1113,17 +1162,22 @@ if modulo == "📊 Vista General Ejecutiva":
         )
 
     st.stop()
-
 # =========================================================
 # CONFIGURACIÓN DEL MÓDULO PRONÓSTICOS E INVENTARIOS
 # =========================================================
+
 if modo_pronostico == "Manual: elegir un método":
-    metodo_manual = st.sidebar.selectbox("Método manual", METODOS_PRONOSTICO)
-    df_forecast = generar_forecast(
+    metodo_manual = st.sidebar.selectbox(
+        "Método manual",
+        METODOS_PRONOSTICO,
+    )
+
+    df_forecast = calcular_forecast_manual_cache(
         df_real,
         metodo_manual,
-        fecha_fin_pronostico=fecha_fin_pronostico,
+        fecha_fin_pronostico,
     )
+
 else:
     metodo_manual = None
     df_forecast = df_forecast_auto
@@ -1146,9 +1200,14 @@ mejor_wmape_producto = sub_comparacion_producto.loc[
 ].iloc[0]
 
 if modo_pronostico == "Automático: mejor método por producto":
-    st.sidebar.success(f"Método elegido para {producto_sel}: {mejor_metodo_producto}")
+    st.sidebar.success(
+        f"Método elegido para {producto_sel}: {mejor_metodo_producto}"
+    )
 else:
-    st.sidebar.info(f"Mejor método para {producto_sel}: {mejor_metodo_producto}")
+    st.sidebar.info(
+        f"Mejor método para {producto_sel}: {mejor_metodo_producto}"
+    )
+
 
 # =========================================================
 # POLÍTICA DE INVENTARIO
@@ -1176,7 +1235,12 @@ metodo_usado = sub_forecast["method_used"].iloc[0]
 # Ejecución de simulación estándar
 sub_sim = simular_producto(sub_forecast, politica, parametros_del_producto)
 kpis = calcular_kpis(sub_sim, parametros_del_producto)
-sub_opt = optimizar_stock_seguridad(sub_forecast, politica, parametros_del_producto, ss_max=ss_max)
+sub_opt = optimizar_cache(
+    sub_forecast,
+    politica,
+    parametros_del_producto,
+    ss_max,
+)
 mejor = sub_opt.sort_values(["stockout_cost", "total_cost"]).iloc[0]
 
 # 🏆 EJECUTAMOS EL TORNEO GLOBAL PARA LA CABECERA PRINCIPAL
@@ -1568,7 +1632,11 @@ with tab5:
     # -------------------------------------------------------------
     # 1. TORNEO GLOBAL ENTRE LAS 3 POLÍTICAS (Criterio: Menor Quiebre)
     # -------------------------------------------------------------
-    campeon = evaluar_campeon_politicas(sub_forecast, parametros_del_producto, ss_max)
+    campeon = campeon_cache(
+    sub_forecast,
+    parametros_del_producto,
+    ss_max,
+)
     
     if campeon['politica_ganadora'] == "sQ - punto de reorden y cantidad fija":
         param_texto = f"Lote Fijo de Compra (Q) = **{campeon['q_optimo']:,.0f} unidades**"
