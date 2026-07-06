@@ -74,7 +74,13 @@ def campeon_cache(sub_forecast, parametros_del_producto, ss_max):
         ss_max,
     )
 
-
+@st.cache_data(show_spinner="Simulando inventario...")
+def simular_producto_cache(sub_forecast, politica, parametros_del_producto):
+    return simular_producto(
+        sub_forecast,
+        politica,
+        parametros_del_producto,
+    )
 # =========================================================
 # FUNCIONES AUXILIARES - FORECAST COMERCIAL Y DASHBOARD
 # =========================================================
@@ -1233,7 +1239,11 @@ sub_forecast = df_forecast[df_forecast["product_id"] == producto_sel].copy()
 metodo_usado = sub_forecast["method_used"].iloc[0]
 
 # Ejecución de simulación estándar
-sub_sim = simular_producto(sub_forecast, politica, parametros_del_producto)
+df_sim = simular_producto_cache(
+    sub_forecast,
+    politica,
+    parametros_del_producto,
+)
 kpis = calcular_kpis(sub_sim, parametros_del_producto)
 sub_opt = optimizar_cache(
     sub_forecast,
