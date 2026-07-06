@@ -30,6 +30,18 @@ from visualizacion import (
 
 warnings.filterwarnings("ignore")
 
+# =========================================================
+# CONFIGURACIÓN GENERAL
+# =========================================================
+st.set_page_config(
+    page_title="Inventory Intelligence Framework",
+    page_icon="📦",
+    layout="wide",
+)
+
+# =========================================================
+# FUNCIONES CACHEADAS PARA MEJORAR VELOCIDAD
+# =========================================================
 @st.cache_data(show_spinner="Calculando forecast automático...")
 def calcular_forecast_auto_cache(df_real, fecha_fin_pronostico):
     return generar_forecast_mejor_por_producto(
@@ -56,6 +68,15 @@ def calcular_ahorro_cache(df_forecast_auto, df_forecast_empresa, df_parametros):
     )
 
 
+@st.cache_data(show_spinner="Simulando inventario...")
+def simular_producto_cache(sub_forecast, politica, parametros_del_producto):
+    return simular_producto(
+        sub_forecast,
+        politica,
+        parametros_del_producto,
+    )
+
+
 @st.cache_data(show_spinner="Optimizando inventario...")
 def optimizar_cache(sub_forecast, politica, parametros_del_producto, ss_max):
     return optimizar_stock_seguridad(
@@ -74,13 +95,34 @@ def campeon_cache(sub_forecast, parametros_del_producto, ss_max):
         ss_max,
     )
 
-@st.cache_data(show_spinner="Simulando inventario...")
-def simular_producto_cache(sub_forecast, politica, parametros_del_producto):
-    return simular_producto(
-        sub_forecast,
-        politica,
-        parametros_del_producto,
+
+@st.cache_data(show_spinner="Preparando TVU...")
+def preparar_tvu_cache(df_tvu_raw):
+    df_tvu = preparar_tvu_lotes(df_tvu_raw)
+    resumen_vencimientos, kpis_tvu = resumen_tvu_lotes(df_tvu)
+    resumen_productos_tvu = resumen_tvu_por_producto(df_tvu)
+    return df_tvu, resumen_vencimientos, kpis_tvu, resumen_productos_tvu
+
+
+@st.cache_data(show_spinner="Calculando comparación económica...")
+def comparacion_economica_sku_cache(
+    df_forecast_auto,
+    df_forecast_empresa,
+    df_parametros,
+    producto,
+):
+    return preparar_comparacion_economica_sku(
+        df_forecast_auto,
+        df_forecast_empresa,
+        df_parametros,
+        producto,
     )
+
+
+@st.cache_data(show_spinner=False)
+def obtener_parametros_producto_cache(df_parametros, producto_sel):
+    return obtener_parametros_producto(df_parametros, producto_sel)
+
 # =========================================================
 # FUNCIONES AUXILIARES - FORECAST COMERCIAL Y DASHBOARD
 # =========================================================
@@ -834,14 +876,8 @@ def formatear_tvu_lotes(df_tvu: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# CONFIGURACIÓN GENERAL
+# TÍTULO PRINCIPAL
 # =========================================================
-st.set_page_config(
-    page_title="Inventory Intelligence Framework",
-    page_icon="📦",
-    layout="wide",
-)
-
 st.title("📦 Framework de Optimización de Inventarios")
 st.caption(
     "Pronóstico mensual + selección automática del mejor método por producto + simulación + optimización de inventarios"
@@ -955,9 +991,9 @@ else:
 # =========================================================
 # TVU - RIESGO DE VENCIMIENTO POR LOTE
 # =========================================================
-df_tvu = preparar_tvu_lotes(df_tvu_raw)
-resumen_vencimientos, kpis_tvu = resumen_tvu_lotes(df_tvu)
-resumen_productos_tvu = resumen_tvu_por_producto(df_tvu)
+df_tvu, resumen_vencimientos, kpis_tvu, resumen_productos_tvu = preparar_tvu_cache(
+    df_tvu_raw
+)
 
 valor_tvu_riesgo = kpis_tvu["valor_riesgo"]
 total_lotes_tvu = len(df_tvu)
@@ -1072,14 +1108,8 @@ fecha_fin_pronostico = st.sidebar.date_input(
 
 fecha_fin_pronostico = pd.to_datetime(fecha_fin_pronostico).to_period("M").to_timestamp()
 
-# 🔴 ESTA ES LA LÍNEA QUE SE HABÍA BORRADO Y QUE CALCULA TODO:
-@st.cache_data(show_spinner="Calculando pronósticos...")
-def calcular_forecast_cache(df_real, fecha_fin_pronostico):
-    return generar_forecast_mejor_por_producto(
-        df_real,
-        fecha_fin_pronostico=fecha_fin_pronostico,
-    )
-df_forecast_auto, df_comparacion = calcular_forecast_cache(
+# Forecast automático cacheado para no recalcular todo en cada interacción
+df_forecast_auto, df_comparacion = calcular_forecast_auto_cache(
     df_real,
     fecha_fin_pronostico,
 )
@@ -1098,8 +1128,8 @@ df_ahorro_forecast, kpis_ahorro = calcular_ahorro_cache(
     df_parametros,
 )
 
-ahorro_total = kpis_forecast["ahorro_total"]
-skus_comparados_forecast = kpis_forecast["skus_comparados"]
+ahorro_total = kpis_ahorro["ahorro_total"]
+skus_comparados_forecast = kpis_ahorro["skus_comparados"]
 
 resumen_mejores_exec = df_comparacion[df_comparacion["Es mejor"]].copy()
 modelo_mas_usado = (
@@ -1230,7 +1260,10 @@ politica = st.sidebar.selectbox(
 
 ss_max = st.sidebar.slider("Máximo SS para optimizar (meses)", 1, 24, 6)
 
-parametros_del_producto = obtener_parametros_producto(df_parametros, producto_sel)
+parametros_del_producto = obtener_parametros_producto_cache(
+    df_parametros,
+    producto_sel,
+)
 
 # =========================================================
 # CONTENIDO PRINCIPAL (PANEL GERENCIAL DE CAMPEONES)
@@ -1239,7 +1272,7 @@ sub_forecast = df_forecast[df_forecast["product_id"] == producto_sel].copy()
 metodo_usado = sub_forecast["method_used"].iloc[0]
 
 # Ejecución de simulación estándar
-df_sim = simular_producto_cache(
+sub_sim = simular_producto_cache(
     sub_forecast,
     politica,
     parametros_del_producto,
@@ -1254,7 +1287,11 @@ sub_opt = optimizar_cache(
 mejor = sub_opt.sort_values(["stockout_cost", "total_cost"]).iloc[0]
 
 # 🏆 EJECUTAMOS EL TORNEO GLOBAL PARA LA CABECERA PRINCIPAL
-campeon = evaluar_campeon_politicas(sub_forecast, parametros_del_producto, ss_max)
+campeon = campeon_cache(
+    sub_forecast,
+    parametros_del_producto,
+    ss_max,
+)
 
 # -----------------------------------------------------------------
 # 🔴 CÁLCULO DE UNIDADES FÍSICAS (De Meses a Unidades Reales)
@@ -1539,11 +1576,11 @@ with tab3:
     # -----------------------------------------------------------------
     st.markdown("### 🎯 Ahorro Potencial por Precisión de Pronóstico")
 
-    df_economico_sku = preparar_comparacion_economica_sku(
-        df_forecast_auto=df_forecast_auto,
-        df_forecast_empresa=df_forecast_empresa,
-        df_parametros=df_parametros,
-        producto=producto_sel,
+    df_economico_sku = comparacion_economica_sku_cache(
+        df_forecast_auto,
+        df_forecast_empresa,
+        df_parametros,
+        producto_sel,
     )
 
     if df_economico_sku.empty:
@@ -1643,10 +1680,10 @@ with tab5:
     # 1. TORNEO GLOBAL ENTRE LAS 3 POLÍTICAS (Criterio: Menor Quiebre)
     # -------------------------------------------------------------
     campeon = campeon_cache(
-    sub_forecast,
-    parametros_del_producto,
-    ss_max,
-)
+        sub_forecast,
+        parametros_del_producto,
+        ss_max,
+    )
     
     if campeon['politica_ganadora'] == "sQ - punto de reorden y cantidad fija":
         param_texto = f"Lote Fijo de Compra (Q) = **{campeon['q_optimo']:,.0f} unidades**"
